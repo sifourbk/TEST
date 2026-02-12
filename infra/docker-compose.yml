@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: naqlo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:6
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    env_file:
+      - ../apps/api/.env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../uploads:/app/uploads
+    command: >
+      sh -c "cd /app/packages/db \
+      && npx prisma db push \
+      && npx prisma db seed \
+      && cd /app/apps/api \
+      && npm run build \
+      && node dist/main.js"
+
+  admin:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.admin
+    env_file:
+      - ../apps/admin/.env
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    command: >
+      sh -c "cd /app/apps/admin && npm run build && npm run start"
+
+volumes:
+  pgdata:
