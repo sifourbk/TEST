@@ -1,0 +1,558 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  DRIVER
+  ADMIN
+}
+
+enum AdminRole {
+  SUPERADMIN
+  OPS
+  VERIFICATION
+  FINANCE
+  SUPPORT
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum TruckType {
+  MINI
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+enum DriverStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+  BANNED
+}
+
+enum VehicleStatus {
+  DRAFT
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
+enum DocumentType {
+  DRIVER_LICENSE
+  ID_CARD
+  SELFIE
+  VEHICLE_REGISTRATION
+  INSURANCE
+  BANK_PROOF
+}
+
+enum DocumentStatus {
+  PENDING
+  AI_REVIEWED
+  APPROVED
+  REJECTED
+  FRAUD
+}
+
+enum OrderStatus {
+  SEARCHING
+  OFFERED
+  ASSIGNED
+  EN_ROUTE
+  ARRIVED
+  LOADING
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  CANCELED
+}
+
+enum OrderOfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum OfferSide {
+  CUSTOMER
+  DRIVER
+}
+
+enum CommissionStatus {
+  UNPAID
+  IN_SETTLEMENT
+  SETTLED
+}
+
+enum SettlementStatus {
+  OPEN
+  PROOF_PENDING
+  VERIFIED
+  OVERDUE
+  FRAUD
+}
+
+enum BanReason {
+  FRAUD
+  NON_PAYMENT
+  OTHER
+}
+
+enum PenaltyStatus {
+  UNPAID
+  PAID
+}
+
+enum SupportTicketStatus {
+  OPEN
+  ESCALATED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum SupportCategory {
+  GENERAL
+  ORDER
+  SETTLEMENT
+  SAFETY
+  FRAUD
+  BAN_APPEAL
+}
+
+enum ChatSenderType {
+  CUSTOMER
+  DRIVER
+  AI
+  ADMIN
+}
+
+model User {
+  id            String     @id @default(cuid())
+  phone         String     @unique
+  role          UserRole
+  adminRole     AdminRole?
+  status        UserStatus @default(ACTIVE)
+  hashedRefresh String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  citiesCreated City[]     @relation("CityCreatedBy")
+  zonesCreated  Zone[]     @relation("ZoneCreatedBy")
+
+  driverProfile DriverProfile?
+  vehicles      Vehicle[]
+  documents     Document[]
+  documentsReviewed Document[] @relation("DocumentReviewedBy")
+
+  customerOrders Order[] @relation("OrderCustomer")
+  driverAssignedOrders Order[] @relation("OrderAssignedDriver")
+  driverOffers OrderOffer[] @relation("OrderOfferDriver")
+
+  bans Ban[]
+  penalties PenaltyInvoice[]
+
+  bansLifted Ban[] @relation("BanLiftedBy")
+  penaltiesMarkedPaid PenaltyInvoice[] @relation("PenaltyMarkedPaidBy")
+  settlementProofsReviewed SettlementProof[] @relation("SettlementProofReviewedBy")
+
+  supportTicketsCreated SupportTicket[] @relation("SupportTicketCreatedBy")
+  chatMessages ChatMessage[] @relation("ChatMessageSender")
+}
+
+model SupportTicket {
+  id            String              @id @default(cuid())
+  createdById   String
+  category      SupportCategory     @default(GENERAL)
+  priority      SupportPriority     @default(MEDIUM)
+  status        SupportTicketStatus @default(OPEN)
+  escalatedReason String?
+  takenOverById String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  createdBy User @relation("SupportTicketCreatedBy", fields: [createdById], references: [id])
+  takenOverBy User? @relation("SupportTicketTakenOverBy", fields: [takenOverById], references: [id])
+
+  messages ChatMessage[]
+
+  @@index([createdById])
+  @@index([status])
+}
+
+model ChatMessage {
+  id        String         @id @default(cuid())
+  ticketId  String
+  senderId  String?
+  senderType ChatSenderType
+  content   String
+  meta      Json?
+  createdAt DateTime       @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+  sender User? @relation("ChatMessageSender", fields: [senderId], references: [id])
+
+  @@index([ticketId])
+  @@index([createdAt])
+}
+
+model DriverProfile {
+  id        String      @id @default(cuid())
+  userId    String      @unique
+  status    DriverStatus @default(PENDING)
+  // hashes (HMAC) to prevent re-registering after ban. Do NOT store raw values.
+  licenseHash String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Vehicle {
+  id          String        @id @default(cuid())
+  ownerId     String
+  truckType   TruckType
+  capacityKg  Int
+  brand       String
+  model       String
+  status      VehicleStatus @default(DRAFT)
+  // HMAC hash of vehicle registration id (do NOT store raw)
+  registrationHash String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner User @relation(fields: [ownerId], references: [id])
+  photos VehiclePhoto[]
+
+  @@index([ownerId])
+}
+
+model VehiclePhoto {
+  id        String   @id @default(cuid())
+  vehicleId String
+  fileUrl   String
+  createdAt DateTime @default(now())
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  @@index([vehicleId])
+}
+
+model Document {
+  id          String        @id @default(cuid())
+  ownerId     String
+  type        DocumentType
+  status      DocumentStatus @default(PENDING)
+  fileUrl     String
+  extractedJson Json?
+  aiDecision  String?
+  aiConfidence Float?
+  aiReasons   Json?
+  reviewedById String?
+  reviewedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner User @relation(fields: [ownerId], references: [id])
+  reviewedBy User? @relation("DocumentReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([type])
+}
+
+model City {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdById String?
+  createdBy   User?    @relation("CityCreatedBy", fields: [createdById], references: [id])
+
+  zones            Zone[]
+  pricingProfiles  PricingProfile[]
+  commissionRules  CommissionRule[]
+}
+
+model Zone {
+  id        String   @id @default(cuid())
+  cityId    String
+  name      String
+  polygon   Json     // GeoJSON Polygon
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city City @relation(fields: [cityId], references: [id])
+
+  createdById String?
+  createdBy   User?    @relation("ZoneCreatedBy", fields: [createdById], references: [id])
+
+  @@index([cityId])
+  @@unique([cityId, name])
+}
+
+model PricingProfile {
+  id        String   @id @default(cuid())
+  cityId    String
+  truckType TruckType
+  baseFee   Int
+  rateKm    Int
+  rateKg    Int
+  minFare   Int
+  maxFare   Int
+
+  negotiateMinPct Float @default(0.2)
+  negotiateMaxPct Float @default(0.3)
+  offerTimeoutSec Int   @default(120)
+  maxCountersPerSide Int @default(3)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city City @relation(fields: [cityId], references: [id])
+
+  @@unique([cityId, truckType])
+  @@index([cityId])
+}
+
+model CommissionRule {
+  id        String   @id @default(cuid())
+  cityId    String
+  truckType TruckType
+  percent   Float @default(0.1)
+  minCommission Int @default(150)
+  fixedFee  Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city City @relation(fields: [cityId], references: [id])
+
+  @@unique([cityId, truckType])
+  @@index([cityId])
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  customerId      String
+  cityId          String
+  truckType       TruckType
+  weightKg        Int
+  pickupLat       Float
+  pickupLng       Float
+  dropoffLat      Float
+  dropoffLng      Float
+  distanceKm      Float
+  estimatedFare   Int
+  finalFare       Int?
+  status          OrderStatus @default(SEARCHING)
+  assignedDriverId String?
+  acceptedOfferId String? @unique
+
+  // Proof of delivery PIN (4 digits) generated when driver arrives.
+  // For MVP this is stored in plaintext; in production, store a hash.
+  deliveryPin     String?
+  arrivedAt       DateTime?
+  deliveredAt     DateTime?
+  completedAt     DateTime?
+  canceledAt      DateTime?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  customer        User        @relation("OrderCustomer", fields: [customerId], references: [id])
+  city            City        @relation(fields: [cityId], references: [id])
+  assignedDriver  User?       @relation("OrderAssignedDriver", fields: [assignedDriverId], references: [id])
+  acceptedOffer   OrderOffer? @relation(fields: [acceptedOfferId], references: [id])
+
+  offers          OrderOffer[]
+  events          OrderEvent[]
+
+  cashPayment     CashPayment?
+  commission      Commission?
+
+  @@index([customerId])
+  @@index([cityId])
+  @@index([status])
+}
+
+model CashPayment {
+  id                String   @id @default(cuid())
+  orderId           String   @unique
+  amount            Int
+  collectedAt       DateTime
+  customerConfirmed Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+model Commission {
+  id          String           @id @default(cuid())
+  orderId     String           @unique
+  driverId    String
+  cityId      String
+  truckType   TruckType
+  finalFare   Int
+  percent     Float
+  minCommission Int
+  fixedFee    Int
+  amount      Int
+  status      CommissionStatus @default(UNPAID)
+  settlementId String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  order  Order @relation(fields: [orderId], references: [id])
+  driver User  @relation(fields: [driverId], references: [id])
+  city   City  @relation(fields: [cityId], references: [id])
+  settlement Settlement? @relation(fields: [settlementId], references: [id])
+
+  @@index([driverId])
+  @@index([cityId])
+  @@index([status])
+  @@index([settlementId])
+}
+
+model Settlement {
+  id        String          @id @default(cuid())
+  driverId  String
+  weekStart DateTime
+  weekEnd   DateTime
+  amountDue Int
+  status    SettlementStatus @default(OPEN)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  overdueAt DateTime?
+  verifiedAt DateTime?
+
+  driver User @relation(fields: [driverId], references: [id])
+  commissions Commission[]
+  proofs SettlementProof[]
+
+  @@unique([driverId, weekStart, weekEnd])
+  @@index([driverId])
+  @@index([status])
+}
+
+model SettlementProof {
+  id          String   @id @default(cuid())
+  settlementId String
+  fileUrl     String
+  status      DocumentStatus @default(PENDING)
+  aiDecision  String?
+  aiConfidence Float?
+  extractedJson Json?
+  reviewedById String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  settlement Settlement @relation(fields: [settlementId], references: [id])
+  reviewedBy User? @relation("SettlementProofReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([settlementId])
+  @@index([status])
+}
+
+model Ban {
+  id               String    @id @default(cuid())
+  userId           String?
+  licenseHash      String?
+  registrationHash String?
+  deviceHash       String?
+  reason           BanReason @default(FRAUD)
+  note             String?
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  liftedAt         DateTime?
+  liftedById       String?
+
+  user       User? @relation(fields: [userId], references: [id])
+  liftedBy   User? @relation("BanLiftedBy", fields: [liftedById], references: [id])
+
+  @@index([userId])
+  @@index([licenseHash])
+  @@index([registrationHash])
+  @@index([isActive])
+}
+
+model PenaltyInvoice {
+  id           String        @id @default(cuid())
+  userId       String
+  settlementId String?
+  amount       Int
+  status       PenaltyStatus @default(UNPAID)
+  proofUrl     String?
+  createdAt    DateTime      @default(now())
+  paidAt       DateTime?
+  markedPaidById String?
+
+  user       User      @relation(fields: [userId], references: [id])
+  settlement Settlement? @relation(fields: [settlementId], references: [id])
+  markedPaidBy User? @relation("PenaltyMarkedPaidBy", fields: [markedPaidById], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([settlementId])
+}
+
+model OrderOffer {
+  id          String          @id @default(cuid())
+  orderId     String
+  side        OfferSide
+  driverId    String?
+  amount      Int
+  status      OrderOfferStatus @default(PENDING)
+  expiresAt   DateTime
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  order       Order           @relation(fields: [orderId], references: [id])
+  driver      User?           @relation("OrderOfferDriver", fields: [driverId], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  type      String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+  @@index([orderId])
+}
+
+// Placeholder models for later phases (kept so migrations don't churn too much)
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+}
